@@ -8,23 +8,22 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.ImageDecoder;
-import android.graphics.Insets;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.MediaStore;
-import android.view.DisplayCutout;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.WindowInsets;
-import android.view.WindowInsetsController;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -49,25 +48,12 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        setTheme(R.style.Theme_SimplePix);
         super.onCreate(savedInstanceState);
 
         getWindow().setStatusBarColor(Color.rgb(18, 18, 20));
         getWindow().setNavigationBarColor(Color.rgb(18, 18, 20));
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            getWindow().setNavigationBarContrastEnforced(false);
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            WindowInsetsController controller = getWindow().getInsetsController();
-            if (controller != null) {
-                controller.setSystemBarsAppearance(
-                        0,
-                        WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
-                                | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
-            }
-        } else {
-            getWindow().getDecorView().setSystemUiVisibility(0);
-        }
+
+        FrameLayout shell = new FrameLayout(this);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -151,8 +137,11 @@ public class MainActivity extends Activity {
         root.addView(scroller, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(72)));
 
-        setContentView(root);
-        applySystemInsets(root);
+        shell.addView(root, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        setContentView(shell);
+        showStartupOverlay(shell);
 
         addPhoto.setOnClickListener(v -> chooseImages());
         text.setOnClickListener(v -> showTextDialog());
@@ -735,40 +724,45 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void applySystemInsets(View view) {
-        view.setOnApplyWindowInsetsListener((v, insets) -> {
-            int left;
-            int top;
-            int right;
-            int bottom;
+    private void showStartupOverlay(FrameLayout shell) {
+        LinearLayout overlay = new LinearLayout(this);
+        overlay.setOrientation(LinearLayout.VERTICAL);
+        overlay.setGravity(Gravity.CENTER);
+        overlay.setBackgroundColor(Color.rgb(18, 18, 20));
+        overlay.setClickable(true);
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                Insets safe = insets.getInsets(
-                        WindowInsets.Type.systemBars()
-                                | WindowInsets.Type.displayCutout());
-                left = safe.left;
-                top = safe.top;
-                right = safe.right;
-                bottom = safe.bottom;
-            } else {
-                left = insets.getSystemWindowInsetLeft();
-                top = insets.getSystemWindowInsetTop();
-                right = insets.getSystemWindowInsetRight();
-                bottom = insets.getSystemWindowInsetBottom();
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.ic_simplepix_logo);
+        logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        logo.setContentDescription("SimplePix");
 
-                DisplayCutout cutout = insets.getDisplayCutout();
-                if (cutout != null) {
-                    left = Math.max(left, cutout.getSafeInsetLeft());
-                    top = Math.max(top, cutout.getSafeInsetTop());
-                    right = Math.max(right, cutout.getSafeInsetRight());
-                    bottom = Math.max(bottom, cutout.getSafeInsetBottom());
-                }
-            }
+        int logoSize = dp(132);
+        overlay.addView(logo, new LinearLayout.LayoutParams(logoSize, logoSize));
 
-            v.setPadding(left, top, right, bottom);
-            return insets;
-        });
-        view.post(view::requestApplyInsets);
+        TextView splashTitle = new TextView(this);
+        splashTitle.setText("SimplePix");
+        splashTitle.setTextColor(Color.WHITE);
+        splashTitle.setTextSize(28);
+        splashTitle.setGravity(Gravity.CENTER);
+        splashTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        titleParams.topMargin = dp(8);
+        overlay.addView(splashTitle, titleParams);
+
+        shell.addView(overlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        overlay.setAlpha(1f);
+        new Handler(Looper.getMainLooper()).postDelayed(() ->
+                overlay.animate()
+                        .alpha(0f)
+                        .setDuration(140L)
+                        .withEndAction(() -> shell.removeView(overlay))
+                        .start(), 360L);
     }
 
     private int dp(int value) {
