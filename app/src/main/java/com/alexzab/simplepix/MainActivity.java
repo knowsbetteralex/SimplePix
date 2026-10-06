@@ -8,12 +8,18 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.ImageDecoder;
+import android.graphics.Insets;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.provider.MediaStore;
+import android.view.DisplayCutout;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -47,10 +53,25 @@ public class MainActivity extends Activity {
 
         getWindow().setStatusBarColor(Color.rgb(18, 18, 20));
         getWindow().setNavigationBarColor(Color.rgb(18, 18, 20));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            getWindow().setNavigationBarContrastEnforced(false);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            WindowInsetsController controller = getWindow().getInsetsController();
+            if (controller != null) {
+                controller.setSystemBarsAppearance(
+                        0,
+                        WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                                | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
+            }
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(0);
+        }
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.rgb(18, 18, 20));
+        applySystemInsets(root);
 
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -711,6 +732,42 @@ public class MainActivity extends Activity {
             getContentResolver().delete(uri, null, null);
             Toast.makeText(this, "Ошибка сохранения", Toast.LENGTH_SHORT).show();
         }
+    }
+
+    private void applySystemInsets(View view) {
+        view.setOnApplyWindowInsetsListener((v, insets) -> {
+            int left;
+            int top;
+            int right;
+            int bottom;
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Insets safe = insets.getInsets(
+                        WindowInsets.Type.systemBars()
+                                | WindowInsets.Type.displayCutout());
+                left = safe.left;
+                top = safe.top;
+                right = safe.right;
+                bottom = safe.bottom;
+            } else {
+                left = insets.getSystemWindowInsetLeft();
+                top = insets.getSystemWindowInsetTop();
+                right = insets.getSystemWindowInsetRight();
+                bottom = insets.getSystemWindowInsetBottom();
+
+                DisplayCutout cutout = insets.getDisplayCutout();
+                if (cutout != null) {
+                    left = Math.max(left, cutout.getSafeInsetLeft());
+                    top = Math.max(top, cutout.getSafeInsetTop());
+                    right = Math.max(right, cutout.getSafeInsetRight());
+                    bottom = Math.max(bottom, cutout.getSafeInsetBottom());
+                }
+            }
+
+            v.setPadding(left, top, right, bottom);
+            return insets;
+        });
+        view.requestApplyInsets();
     }
 
     private int dp(int value) {
