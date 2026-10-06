@@ -9,11 +9,6 @@
 
         <activity
             android:name=".MainActivity"
-            android:screenOrientation="unspecified"
-            android:exported="false" />
-
-        <activity
-            android:name=".SplashActivity"
             android:theme="@style/Theme.SimplePix.Splash"
             android:screenOrientation="unspecified"
             android:exported="true">
