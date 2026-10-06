@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.SimplePix.Splash" parent="Theme.SimplePix">
+        <item name="android:windowSplashScreenBackground">@color/simplepix_bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_simplepix_logo</item>
+        <item name="android:postSplashScreenTheme">@style/Theme.SimplePix</item>
+    </style>
+</resources>
