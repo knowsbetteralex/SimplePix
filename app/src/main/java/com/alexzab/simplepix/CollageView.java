@@ -6,13 +6,13 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
 import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
-import android.view.ScaleGestureDetector;
 import android.view.View;
 
 import java.util.ArrayDeque;
@@ -23,6 +23,9 @@ import java.util.List;
 public class CollageView extends View {
 
     private static final int MAX_HISTORY = 25;
+    private static final int DRAG_NONE = 0;
+    private static final int DRAG_MOVE = 1;
+    private static final int DRAG_RESIZE = 2;
 
     private abstract static class Layer {
         final Matrix matrix = new Matrix();
@@ -47,8 +50,38 @@ public class CollageView extends View {
                             + values[Matrix.MSKEW_Y] * values[Matrix.MSKEW_Y]);
         }
 
+        float rotationDegrees() {
+            float[] values = new float[9];
+            matrix.getValues(values);
+            return (float) Math.toDegrees(
+                    Math.atan2(values[Matrix.MSKEW_Y], values[Matrix.MSCALE_X]));
+        }
+
         void copyMatrixTo(Layer target) {
             target.matrix.set(matrix);
+        }
+
+        float[] transformedCorners() {
+            float[] p = {
+                    localBounds.left, localBounds.top,
+                    localBounds.right, localBounds.top,
+                    localBounds.right, localBounds.bottom,
+                    localBounds.left, localBounds.bottom
+            };
+            matrix.mapPoints(p);
+            return p;
+        }
+
+        float[] transformedCenter() {
+            float[] p = {localBounds.centerX(), localBounds.centerY()};
+            matrix.mapPoints(p);
+            return p;
+        }
+
+        RectF transformedBounds() {
+            RectF result = new RectF(localBounds);
+            matrix.mapRect(result);
+            return result;
         }
     }
 
@@ -160,6 +193,8 @@ public class CollageView extends View {
         int selectedIndex;
         int backgroundColor;
         float canvasAspectRatio;
+        boolean customCanvas;
+        final RectF canvasRect = new RectF();
     }
 
     private final List<Layer> layers = new ArrayList<>();
@@ -169,20 +204,32 @@ public class CollageView extends View {
     private Layer selectedLayer;
     private int backgroundColor = Color.rgb(238, 238, 238);
     private float canvasAspectRatio = 0f;
+    private boolean customCanvas;
     private final RectF canvasRect = new RectF();
 
-    private float lastX;
-    private float lastY;
-    private float lastRotation;
-    private boolean rotating;
     private boolean eraserMode;
-    private boolean gestureCheckpointed;
     private float eraserRadiusPx;
 
+    private int dragMode = DRAG_NONE;
+    private int resizeHandle = -1;
+    private float touchDownX;
+    private float touchDownY;
+    private float resizePivotX;
+    private float resizePivotY;
+    private float resizeStartDistance;
+    private float resizeStartScale;
+    private final Matrix gestureStartMatrix = new Matrix();
+    private boolean gestureCheckpointed;
+
     private final Paint selectionPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint handleFillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint handleStrokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint workspacePaint = new Paint();
     private final Paint canvasPaint = new Paint();
-    private final ScaleGestureDetector scaleDetector;
+    private final Path selectionPath = new Path();
+
+    private final float handleRadiusPx;
+    private final float handleHitRadiusPx;
 
     public CollageView(Context context) {
         this(context, null);
@@ -192,37 +239,22 @@ public class CollageView extends View {
         super(context, attrs);
 
         eraserRadiusPx = dp(34);
+        handleRadiusPx = dp(7);
+        handleHitRadiusPx = dp(20);
 
         workspacePaint.setColor(Color.rgb(45, 45, 48));
 
         selectionPaint.setStyle(Paint.Style.STROKE);
-        selectionPaint.setStrokeWidth(dp(2));
+        selectionPaint.setStrokeWidth(dp(1.5f));
         selectionPaint.setColor(Color.WHITE);
-        selectionPaint.setShadowLayer(dp(4), 0, 0, Color.BLACK);
+        selectionPaint.setShadowLayer(dp(3), 0, 0, Color.BLACK);
 
-        scaleDetector = new ScaleGestureDetector(context,
-                new ScaleGestureDetector.SimpleOnScaleGestureListener() {
-                    @Override
-                    public boolean onScale(ScaleGestureDetector detector) {
-                        if (selectedLayer == null || eraserMode) return false;
-                        checkpointGestureIfNeeded();
+        handleFillPaint.setStyle(Paint.Style.FILL);
+        handleFillPaint.setColor(Color.WHITE);
 
-                        float factor = detector.getScaleFactor();
-                        factor = Math.max(0.75f, Math.min(factor, 1.33f));
-
-                        float current = selectedLayer.scale();
-                        float wanted = Math.max(0.08f, Math.min(current * factor, 12f));
-                        float corrected = wanted / Math.max(current, 0.0001f);
-
-                        selectedLayer.matrix.postScale(
-                                corrected,
-                                corrected,
-                                detector.getFocusX(),
-                                detector.getFocusY());
-                        invalidate();
-                        return true;
-                    }
-                });
+        handleStrokePaint.setStyle(Paint.Style.STROKE);
+        handleStrokePaint.setStrokeWidth(dp(2));
+        handleStrokePaint.setColor(Color.rgb(65, 85, 220));
     }
 
     public void addImage(Bitmap bitmap) {
@@ -296,6 +328,10 @@ public class CollageView extends View {
         return true;
     }
 
+    public boolean hasSelection() {
+        return selectedLayer != null;
+    }
+
     public boolean isTextSelected() {
         return selectedLayer instanceof TextLayer;
     }
@@ -328,6 +364,24 @@ public class CollageView extends View {
         return selectedLayer instanceof TextLayer && ((TextLayer) selectedLayer).italic;
     }
 
+    public float getSelectedRotationDegrees() {
+        if (selectedLayer == null) return 0f;
+        return normalizeAngle(selectedLayer.rotationDegrees());
+    }
+
+    public boolean setSelectedRotationDegrees(float degrees, boolean addUndoCheckpoint) {
+        if (selectedLayer == null) return false;
+
+        if (addUndoCheckpoint) checkpoint();
+
+        float current = selectedLayer.rotationDegrees();
+        float delta = normalizeAngle(degrees - current);
+        float[] center = selectedLayer.transformedCenter();
+        selectedLayer.matrix.postRotate(delta, center[0], center[1]);
+        invalidate();
+        return true;
+    }
+
     public void setBackgroundFill(int color) {
         if (backgroundColor == color) return;
         checkpoint();
@@ -340,15 +394,56 @@ public class CollageView extends View {
     }
 
     public void setCanvasAspectRatio(float aspectRatio) {
-        if (Math.abs(canvasAspectRatio - aspectRatio) < 0.0001f) return;
+        if (!customCanvas && Math.abs(canvasAspectRatio - aspectRatio) < 0.0001f) return;
         checkpoint();
+        customCanvas = false;
         canvasAspectRatio = Math.max(0f, aspectRatio);
-        updateCanvasRect(getWidth(), getHeight());
+        updateCanvasRect(getWidth(), getHeight(), getWidth(), getHeight());
         invalidate();
     }
 
     public float getCanvasAspectRatio() {
         return canvasAspectRatio;
+    }
+
+    public boolean cropCanvasToContent() {
+        if (layers.isEmpty() || canvasRect.isEmpty()) return false;
+
+        RectF content = null;
+        for (Layer layer : layers) {
+            RectF b = layer.transformedBounds();
+            if (content == null) content = new RectF(b);
+            else content.union(b);
+        }
+
+        if (content == null) return false;
+
+        RectF target = new RectF(content);
+        if (!target.intersect(canvasRect)) return false;
+
+        float padding = dp(3);
+        target.inset(-padding, -padding);
+
+        target.left = Math.max(target.left, canvasRect.left);
+        target.top = Math.max(target.top, canvasRect.top);
+        target.right = Math.min(target.right, canvasRect.right);
+        target.bottom = Math.min(target.bottom, canvasRect.bottom);
+
+        if (target.width() < dp(8) || target.height() < dp(8)) return false;
+
+        if (Math.abs(target.left - canvasRect.left) < 0.5f
+                && Math.abs(target.top - canvasRect.top) < 0.5f
+                && Math.abs(target.right - canvasRect.right) < 0.5f
+                && Math.abs(target.bottom - canvasRect.bottom) < 0.5f) {
+            return false;
+        }
+
+        checkpoint();
+        canvasRect.set(target);
+        customCanvas = true;
+        canvasAspectRatio = canvasRect.width() / canvasRect.height();
+        invalidate();
+        return true;
     }
 
     public boolean isEraserMode() {
@@ -361,6 +456,7 @@ public class CollageView extends View {
             return false;
         }
         eraserMode = enabled;
+        dragMode = DRAG_NONE;
         invalidate();
         return true;
     }
@@ -440,10 +536,10 @@ public class CollageView extends View {
 
         checkpoint();
 
-        float[] croppedOrigin = {left, top};
-        float[] oldOrigin = {0f, 0f};
-        layer.matrix.mapPoints(croppedOrigin);
-        layer.matrix.mapPoints(oldOrigin);
+        float[] offset = {left, top};
+        float[] origin = {0f, 0f};
+        layer.matrix.mapPoints(offset);
+        layer.matrix.mapPoints(origin);
 
         Bitmap cropped = Bitmap.createBitmap(layer.bitmap, left, top, newW, newH)
                 .copy(Bitmap.Config.ARGB_8888, true);
@@ -451,8 +547,8 @@ public class CollageView extends View {
         layer.updateBounds();
 
         layer.matrix.postTranslate(
-                croppedOrigin[0] - oldOrigin[0],
-                croppedOrigin[1] - oldOrigin[1]);
+                offset[0] - origin[0],
+                offset[1] - origin[1]);
 
         invalidate();
         return true;
@@ -514,24 +610,51 @@ public class CollageView extends View {
         }
 
         if (showSelection && selectedLayer != null) {
-            canvas.save();
-            canvas.concat(selectedLayer.matrix);
-            canvas.drawRect(selectedLayer.localBounds, selectionPaint);
-            canvas.restore();
+            drawSelection(canvas);
         }
 
         canvas.restore();
     }
 
+    private void drawSelection(Canvas canvas) {
+        float[] c = selectedLayer.transformedCorners();
+
+        selectionPath.reset();
+        selectionPath.moveTo(c[0], c[1]);
+        selectionPath.lineTo(c[2], c[3]);
+        selectionPath.lineTo(c[4], c[5]);
+        selectionPath.lineTo(c[6], c[7]);
+        selectionPath.close();
+        canvas.drawPath(selectionPath, selectionPaint);
+
+        for (int i = 0; i < 4; i++) {
+            float x = c[i * 2];
+            float y = c[i * 2 + 1];
+            canvas.drawCircle(x, y, handleRadiusPx, handleFillPaint);
+            canvas.drawCircle(x, y, handleRadiusPx, handleStrokePaint);
+        }
+    }
+
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-        updateCanvasRect(w, h);
+        updateCanvasRect(w, h, oldw, oldh);
     }
 
-    private void updateCanvasRect(int w, int h) {
+    private void updateCanvasRect(int w, int h, int oldw, int oldh) {
         if (w <= 0 || h <= 0) {
             canvasRect.set(0, 0, Math.max(1, w), Math.max(1, h));
+            return;
+        }
+
+        if (customCanvas && oldw > 0 && oldh > 0 && !canvasRect.isEmpty()) {
+            float sx = w / (float) oldw;
+            float sy = h / (float) oldh;
+            canvasRect.set(
+                    canvasRect.left * sx,
+                    canvasRect.top * sy,
+                    canvasRect.right * sx,
+                    canvasRect.bottom * sy);
             return;
         }
 
@@ -564,41 +687,22 @@ public class CollageView extends View {
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         if (eraserMode) {
-            if (!(selectedLayer instanceof ImageLayer)) {
-                eraserMode = false;
-                return true;
-            }
-
-            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-                if (!canvasRect.contains(event.getX(), event.getY())) return true;
-                checkpoint();
-                ((ImageLayer) selectedLayer).beginPixelEdit();
-                ((ImageLayer) selectedLayer).erase(
-                        event.getX(),
-                        event.getY(),
-                        eraserRadiusPx);
-                invalidate();
-                return true;
-            }
-
-            if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
-                ((ImageLayer) selectedLayer).erase(
-                        event.getX(),
-                        event.getY(),
-                        eraserRadiusPx);
-                invalidate();
-                return true;
-            }
-
-            return true;
+            return handleEraserTouch(event);
         }
-
-        scaleDetector.onTouchEvent(event);
 
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 gestureCheckpointed = false;
-                rotating = false;
+                dragMode = DRAG_NONE;
+                resizeHandle = -1;
+
+                if (selectedLayer != null) {
+                    int handle = findResizeHandle(event.getX(), event.getY());
+                    if (handle >= 0) {
+                        beginResize(handle, event.getX(), event.getY());
+                        return true;
+                    }
+                }
 
                 if (!canvasRect.contains(event.getX(), event.getY())) {
                     selectedLayer = null;
@@ -606,60 +710,63 @@ public class CollageView extends View {
                     return true;
                 }
 
-                selectedLayer = findTopLayer(event.getX(), event.getY());
-                lastX = event.getX();
-                lastY = event.getY();
-                invalidate();
-                return true;
+                Layer touched = findTopLayer(event.getX(), event.getY());
+                selectedLayer = touched;
 
-            case MotionEvent.ACTION_POINTER_DOWN:
-                if (event.getPointerCount() >= 2 && selectedLayer != null) {
-                    lastRotation = angle(event);
-                    rotating = true;
+                if (selectedLayer != null) {
+                    dragMode = DRAG_MOVE;
+                    gestureStartMatrix.set(selectedLayer.matrix);
+                    touchDownX = event.getX();
+                    touchDownY = event.getY();
                 }
+
+                invalidate();
                 return true;
 
             case MotionEvent.ACTION_MOVE:
                 if (selectedLayer == null) return true;
 
-                if (event.getPointerCount() == 1 && !scaleDetector.isInProgress()) {
-                    float x = event.getX();
-                    float y = event.getY();
-                    float dx = x - lastX;
-                    float dy = y - lastY;
+                if (dragMode == DRAG_MOVE) {
+                    float dx = event.getX() - touchDownX;
+                    float dy = event.getY() - touchDownY;
 
-                    if (Math.abs(dx) > 0.1f || Math.abs(dy) > 0.1f) {
+                    if (Math.abs(dx) > 0.5f || Math.abs(dy) > 0.5f) {
                         checkpointGestureIfNeeded();
+                        selectedLayer.matrix.set(gestureStartMatrix);
                         selectedLayer.matrix.postTranslate(dx, dy);
+                        invalidate();
                     }
+                } else if (dragMode == DRAG_RESIZE) {
+                    float distance = distance(
+                            event.getX(),
+                            event.getY(),
+                            resizePivotX,
+                            resizePivotY);
 
-                    lastX = x;
-                    lastY = y;
-                    invalidate();
-                } else if (event.getPointerCount() >= 2 && rotating) {
-                    float now = angle(event);
-                    float delta = normalizeAngle(now - lastRotation);
+                    if (resizeStartDistance > 1f && distance > 1f) {
+                        float factor = distance / resizeStartDistance;
+                        float wantedScale = resizeStartScale * factor;
+                        wantedScale = Math.max(0.06f, Math.min(wantedScale, 16f));
+                        factor = wantedScale / Math.max(resizeStartScale, 0.0001f);
 
-                    if (Math.abs(delta) > 0.05f) {
-                        checkpointGestureIfNeeded();
-                        selectedLayer.matrix.postRotate(
-                                delta,
-                                midpointX(event),
-                                midpointY(event));
+                        if (Math.abs(factor - 1f) > 0.003f) {
+                            checkpointGestureIfNeeded();
+                            selectedLayer.matrix.set(gestureStartMatrix);
+                            selectedLayer.matrix.postScale(
+                                    factor,
+                                    factor,
+                                    resizePivotX,
+                                    resizePivotY);
+                            invalidate();
+                        }
                     }
-
-                    lastRotation = now;
-                    invalidate();
                 }
-                return true;
-
-            case MotionEvent.ACTION_POINTER_UP:
-                rotating = false;
                 return true;
 
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
-                rotating = false;
+                dragMode = DRAG_NONE;
+                resizeHandle = -1;
                 gestureCheckpointed = false;
                 return true;
 
@@ -668,11 +775,59 @@ public class CollageView extends View {
         }
     }
 
-    private void checkpointGestureIfNeeded() {
-        if (!gestureCheckpointed) {
-            checkpoint();
-            gestureCheckpointed = true;
+    private boolean handleEraserTouch(MotionEvent event) {
+        if (!(selectedLayer instanceof ImageLayer)) {
+            eraserMode = false;
+            return true;
         }
+
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            if (!canvasRect.contains(event.getX(), event.getY())) return true;
+            checkpoint();
+            ((ImageLayer) selectedLayer).beginPixelEdit();
+            ((ImageLayer) selectedLayer).erase(
+                    event.getX(),
+                    event.getY(),
+                    eraserRadiusPx);
+            invalidate();
+            return true;
+        }
+
+        if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+            ((ImageLayer) selectedLayer).erase(
+                    event.getX(),
+                    event.getY(),
+                    eraserRadiusPx);
+            invalidate();
+            return true;
+        }
+
+        return true;
+    }
+
+    private void beginResize(int handle, float x, float y) {
+        resizeHandle = handle;
+        dragMode = DRAG_RESIZE;
+        gestureStartMatrix.set(selectedLayer.matrix);
+        resizeStartScale = selectedLayer.scale();
+
+        float[] c = selectedLayer.transformedCorners();
+        int opposite = (handle + 2) % 4;
+        resizePivotX = c[opposite * 2];
+        resizePivotY = c[opposite * 2 + 1];
+        resizeStartDistance = distance(x, y, resizePivotX, resizePivotY);
+    }
+
+    private int findResizeHandle(float x, float y) {
+        if (selectedLayer == null) return -1;
+        float[] c = selectedLayer.transformedCorners();
+
+        for (int i = 0; i < 4; i++) {
+            if (distance(x, y, c[i * 2], c[i * 2 + 1]) <= handleHitRadiusPx) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private Layer findTopLayer(float x, float y) {
@@ -681,6 +836,13 @@ public class CollageView extends View {
             if (layer.contains(x, y)) return layer;
         }
         return null;
+    }
+
+    private void checkpointGestureIfNeeded() {
+        if (!gestureCheckpointed) {
+            checkpoint();
+            gestureCheckpointed = true;
+        }
     }
 
     private void checkpoint() {
@@ -706,6 +868,8 @@ public class CollageView extends View {
         EditorState state = new EditorState();
         state.backgroundColor = backgroundColor;
         state.canvasAspectRatio = canvasAspectRatio;
+        state.customCanvas = customCanvas;
+        state.canvasRect.set(canvasRect);
         state.selectedIndex = selectedLayer == null ? -1 : layers.indexOf(selectedLayer);
 
         for (Layer layer : layers) {
@@ -723,7 +887,13 @@ public class CollageView extends View {
 
         backgroundColor = state.backgroundColor;
         canvasAspectRatio = state.canvasAspectRatio;
-        updateCanvasRect(getWidth(), getHeight());
+        customCanvas = state.customCanvas;
+
+        if (customCanvas) {
+            canvasRect.set(state.canvasRect);
+        } else {
+            updateCanvasRect(getWidth(), getHeight(), getWidth(), getHeight());
+        }
 
         if (state.selectedIndex >= 0 && state.selectedIndex < layers.size()) {
             selectedLayer = layers.get(state.selectedIndex);
@@ -740,19 +910,10 @@ public class CollageView extends View {
         return value * getResources().getDisplayMetrics().scaledDensity;
     }
 
-    private static float angle(MotionEvent event) {
-        if (event.getPointerCount() < 2) return 0f;
-        float dx = event.getX(1) - event.getX(0);
-        float dy = event.getY(1) - event.getY(0);
-        return (float) Math.toDegrees(Math.atan2(dy, dx));
-    }
-
-    private static float midpointX(MotionEvent event) {
-        return (event.getX(0) + event.getX(1)) / 2f;
-    }
-
-    private static float midpointY(MotionEvent event) {
-        return (event.getY(0) + event.getY(1)) / 2f;
+    private static float distance(float x1, float y1, float x2, float y2) {
+        float dx = x1 - x2;
+        float dy = y1 - y2;
+        return (float) Math.sqrt(dx * dx + dy * dy);
     }
 
     private static float normalizeAngle(float angle) {

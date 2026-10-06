@@ -13,12 +13,12 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.provider.MediaStore;
 import android.view.Gravity;
-import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.HorizontalScrollView;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -37,9 +37,9 @@ public class MainActivity extends Activity {
     private static final int PICK_IMAGES = 1001;
 
     private CollageView collageView;
-    private Button eraserButton;
-    private Button undoButton;
-    private Button redoButton;
+    private ImageButton eraserButton;
+    private ImageButton undoButton;
+    private ImageButton redoButton;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -65,21 +65,21 @@ public class MainActivity extends Activity {
         topBar.addView(title, new LinearLayout.LayoutParams(
                 0, dp(44), 1f));
 
-        undoButton = topButton("↶");
-        redoButton = topButton("↷");
-        Button saveButton = topButton("Сохранить");
+        undoButton = iconButton(android.R.drawable.ic_menu_revert, "Отменить");
+        redoButton = iconButton(android.R.drawable.ic_menu_recent_history, "Повторить");
+        ImageButton saveButton = iconButton(android.R.drawable.ic_menu_save, "Сохранить");
 
         topBar.addView(undoButton);
         topBar.addView(redoButton);
         topBar.addView(saveButton);
 
         root.addView(topBar, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
 
         collageView = new CollageView(this);
-        LinearLayout.LayoutParams canvasParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
-        root.addView(collageView, canvasParams);
+        root.addView(collageView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         HorizontalScrollView scroller = new HorizontalScrollView(this);
         scroller.setHorizontalScrollBarEnabled(false);
@@ -91,40 +91,71 @@ public class MainActivity extends Activity {
         tools.setGravity(Gravity.CENTER_VERTICAL);
         tools.setPadding(dp(8), dp(8), dp(8), dp(10));
 
-        Button addPhoto = toolButton("Фото");
-        Button text = toolButton("Текст");
-        Button crop = toolButton("Обрезка");
-        eraserButton = toolButton("Ластик");
-        Button fill = toolButton("Фон");
-        Button canvas = toolButton("Холст");
-        Button backward = toolButton("Ниже");
-        Button forward = toolButton("Выше");
-        Button delete = toolButton("Удалить");
+        ImageButton addPhoto = iconButton(
+                android.R.drawable.ic_menu_gallery, "Добавить фото");
+        ImageButton text = iconButton(
+                android.R.drawable.ic_menu_edit, "Добавить или изменить текст");
+        ImageButton cropPhoto = iconButton(
+                android.R.drawable.ic_menu_crop, "Обрезать выбранное фото");
+        eraserButton = iconButton(
+                android.R.drawable.ic_menu_close_clear_cancel, "Ластик");
+        ImageButton rotate = iconButton(
+                android.R.drawable.ic_menu_rotate, "Повернуть слой");
+        ImageButton fill = iconButton(
+                android.R.drawable.ic_menu_manage, "Цвет фона");
+        ImageButton canvas = iconButton(
+                android.R.drawable.ic_menu_mapmode, "Формат холста");
+        ImageButton trimCanvas = iconButton(
+                android.R.drawable.ic_menu_zoom, "Обрезать пустой холст");
+        ImageButton backward = iconButton(
+                android.R.drawable.arrow_down_float, "Слой ниже");
+        ImageButton forward = iconButton(
+                android.R.drawable.arrow_up_float, "Слой выше");
+        ImageButton delete = iconButton(
+                android.R.drawable.ic_menu_delete, "Удалить слой");
 
         tools.addView(addPhoto);
         tools.addView(text);
-        tools.addView(crop);
+        tools.addView(cropPhoto);
         tools.addView(eraserButton);
+        tools.addView(rotate);
         tools.addView(fill);
         tools.addView(canvas);
+        tools.addView(trimCanvas);
         tools.addView(backward);
         tools.addView(forward);
         tools.addView(delete);
 
         scroller.addView(tools);
         root.addView(scroller, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(68)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(72)));
 
         setContentView(root);
 
         addPhoto.setOnClickListener(v -> chooseImages());
         text.setOnClickListener(v -> showTextDialog());
-        crop.setOnClickListener(v -> showCropDialog());
+        cropPhoto.setOnClickListener(v -> showCropDialog());
+        rotate.setOnClickListener(v -> showRotateDialog());
+
         fill.setOnClickListener(v -> showColorDialog(
                 "Цвет фона",
                 collageView.getBackgroundColorValue(),
-                color -> collageView.setBackgroundFill(color)));
+                color -> {
+                    collageView.setBackgroundFill(color);
+                    updateHistoryButtons();
+                }));
+
         canvas.setOnClickListener(v -> showCanvasDialog());
+
+        trimCanvas.setOnClickListener(v -> {
+            if (!collageView.cropCanvasToContent()) {
+                Toast.makeText(
+                        this,
+                        "Пустых краёв для обрезки нет",
+                        Toast.LENGTH_SHORT).show();
+            }
+            updateHistoryButtons();
+        });
 
         eraserButton.setOnClickListener(v -> toggleEraser());
 
@@ -132,10 +163,12 @@ public class MainActivity extends Activity {
             collageView.sendSelectedBackward();
             updateHistoryButtons();
         });
+
         forward.setOnClickListener(v -> {
             collageView.bringSelectedForward();
             updateHistoryButtons();
         });
+
         delete.setOnClickListener(v -> {
             collageView.deleteSelected();
             collageView.setEraserMode(false);
@@ -162,39 +195,21 @@ public class MainActivity extends Activity {
         saveButton.setOnClickListener(v -> saveCollage());
 
         updateHistoryButtons();
+        updateEraserButton();
     }
 
-    private Button topButton(String text) {
-        Button button = new Button(this);
-        button.setText(text);
-        button.setAllCaps(false);
-        button.setTextColor(Color.WHITE);
-        button.setTextSize(15);
-        button.setMinWidth(0);
-        button.setMinimumWidth(0);
-        button.setPadding(dp(12), 0, dp(12), 0);
-        button.setBackground(buttonBackground(Color.rgb(50, 50, 56)));
-
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(40));
-        params.setMargins(dp(4), 0, 0, 0);
-        button.setLayoutParams(params);
-        return button;
-    }
-
-    private Button toolButton(String text) {
-        Button button = new Button(this);
-        button.setText(text);
-        button.setAllCaps(false);
-        button.setTextColor(Color.WHITE);
-        button.setTextSize(13);
-        button.setMinWidth(0);
-        button.setMinimumWidth(0);
-        button.setPadding(dp(14), 0, dp(14), 0);
+    private ImageButton iconButton(int drawableRes, String description) {
+        ImageButton button = new ImageButton(this);
+        button.setImageResource(drawableRes);
+        button.setColorFilter(Color.WHITE);
+        button.setContentDescription(description);
+        button.setTooltipText(description);
+        button.setScaleType(ImageButton.ScaleType.CENTER_INSIDE);
+        button.setPadding(dp(11), dp(11), dp(11), dp(11));
         button.setBackground(buttonBackground(Color.rgb(55, 55, 62)));
 
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(44));
+                dp(48), dp(48));
         params.setMargins(dp(4), 0, dp(4), 0);
         button.setLayoutParams(params);
         return button;
@@ -309,6 +324,7 @@ public class MainActivity extends Activity {
         updateSizeLabel.run();
 
         sizeSeek.setOnSeekBarChangeListener(simpleSeekListener(updateSizeLabel));
+
         colorButton.setOnClickListener(v -> showColorDialog(
                 "Цвет текста",
                 chosenColor[0],
@@ -368,13 +384,87 @@ public class MainActivity extends Activity {
         };
 
         new AlertDialog.Builder(this)
-                .setTitle("Обрезка по центру")
+                .setTitle("Обрезка фотографии")
                 .setItems(names, (dialog, which) -> {
                     collageView.cropSelected(ratios[which]);
                     updateHistoryButtons();
                 })
                 .setNegativeButton("Отмена", null)
                 .show();
+    }
+
+    private void showRotateDialog() {
+        if (!collageView.hasSelection()) {
+            Toast.makeText(this, "Сначала выберите слой", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        final float original = collageView.getSelectedRotationDegrees();
+        final boolean[] changed = {false};
+
+        LinearLayout box = dialogColumn();
+        TextView label = dialogLabel("");
+
+        SeekBar seek = new SeekBar(this);
+        seek.setMax(360);
+        seek.setProgress(Math.round(original) + 180);
+
+        Runnable updateLabel = () -> {
+            int degrees = seek.getProgress() - 180;
+            label.setText("Поворот: " + degrees + "°");
+        };
+        updateLabel.run();
+
+        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                int degrees = progress - 180;
+                updateLabel.run();
+                if (fromUser) {
+                    collageView.setSelectedRotationDegrees(degrees, false);
+                    changed[0] = true;
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+            }
+        });
+
+        box.addView(label, fullWidth());
+        box.addView(seek, fullWidth());
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Поворот слоя")
+                .setView(box)
+                .setPositiveButton("Готово", null)
+                .setNegativeButton("Отмена", null)
+                .create();
+
+        dialog.setOnShowListener(ignored -> {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                if (changed[0]) {
+                    float finalAngle = seek.getProgress() - 180f;
+                    collageView.setSelectedRotationDegrees(original, false);
+                    collageView.setSelectedRotationDegrees(finalAngle, true);
+                    updateHistoryButtons();
+                }
+                dialog.dismiss();
+            });
+
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(v -> {
+                if (changed[0]) {
+                    collageView.setSelectedRotationDegrees(original, false);
+                }
+                dialog.dismiss();
+            });
+        });
+
+        dialog.show();
     }
 
     private void toggleEraser() {
@@ -577,7 +667,6 @@ public class MainActivity extends Activity {
     private void updateEraserButton() {
         if (eraserButton == null) return;
 
-        eraserButton.setText(collageView.isEraserMode() ? "Ластик ✓" : "Ластик");
         eraserButton.setBackground(buttonBackground(
                 collageView.isEraserMode()
                         ? Color.rgb(84, 92, 190)
