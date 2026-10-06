@@ -49,6 +49,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        setTheme(R.style.Theme_SimplePix);
         super.onCreate(savedInstanceState);
 
         getWindow().setStatusBarColor(Color.rgb(18, 18, 20));
@@ -71,7 +72,6 @@ public class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.rgb(18, 18, 20));
-        applySystemInsets(root);
 
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -152,6 +152,7 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(72)));
 
         setContentView(root);
+        applySystemInsets(root);
 
         addPhoto.setOnClickListener(v -> chooseImages());
         text.setOnClickListener(v -> showTextDialog());
@@ -767,7 +768,7 @@ public class MainActivity extends Activity {
             v.setPadding(left, top, right, bottom);
             return insets;
         });
-        view.requestApplyInsets();
+        view.post(view::requestApplyInsets);
     }
 
     private int dp(int value) {
