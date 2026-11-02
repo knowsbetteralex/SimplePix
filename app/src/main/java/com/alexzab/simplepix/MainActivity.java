@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.ImageDecoder;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
@@ -31,6 +32,8 @@ import android.widget.Toast;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
@@ -41,196 +44,425 @@ public class MainActivity extends Activity {
 
     private static final int PICK_IMAGES = 1001;
 
+    private static final int BG = Color.rgb(15, 17, 22);
+    private static final int PANEL = Color.rgb(22, 25, 34);
+    private static final int CHIP = Color.rgb(42, 46, 58);
+    private static final int CHIP_ACTIVE = Color.rgb(77, 84, 164);
+    private static final int ACCENT = Color.rgb(124, 131, 255);
+    private static final int TEXT = Color.rgb(246, 247, 251);
+    private static final int MUTED = Color.rgb(168, 174, 190);
+
     private CollageView collageView;
-    private ImageButton eraserButton;
     private ImageButton undoButton;
     private ImageButton redoButton;
+    private TextView eraserChip;
+
+    private HorizontalScrollView paletteScroller;
+    private LinearLayout paletteRow;
+    private final List<TextView> groupButtons = new ArrayList<>();
+    private String activeGroup;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        getWindow().setStatusBarColor(Color.rgb(18, 18, 20));
-        getWindow().setNavigationBarColor(Color.rgb(18, 18, 20));
+        getWindow().setStatusBarColor(BG);
+        getWindow().setNavigationBarColor(BG);
 
         FrameLayout shell = new FrameLayout(this);
+        shell.setBackgroundColor(BG);
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.rgb(18, 18, 20));
+        root.setBackgroundColor(BG);
 
-        LinearLayout topBar = new LinearLayout(this);
-        topBar.setOrientation(LinearLayout.HORIZONTAL);
-        topBar.setGravity(Gravity.CENTER_VERTICAL);
-        topBar.setPadding(dp(12), dp(8), dp(8), dp(8));
-
-        TextView title = new TextView(this);
-        title.setText("SimplePix");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(20);
-        title.setTypeface(null, android.graphics.Typeface.BOLD);
-        topBar.addView(title, new LinearLayout.LayoutParams(
-                0, dp(44), 1f));
-
-        undoButton = iconButton(android.R.drawable.ic_menu_revert, "Отменить");
-        redoButton = iconButton(android.R.drawable.ic_menu_recent_history, "Повторить");
-        ImageButton saveButton = iconButton(android.R.drawable.ic_menu_save, "Сохранить");
-
-        topBar.addView(undoButton);
-        topBar.addView(redoButton);
-        topBar.addView(saveButton);
-
-        root.addView(topBar, new LinearLayout.LayoutParams(
+        root.addView(buildTopBar(), new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+                dp(62)));
+
+        FrameLayout canvasFrame = new FrameLayout(this);
+        canvasFrame.setBackground(roundedDrawable(Color.rgb(28, 31, 40), 20));
+        LinearLayout.LayoutParams canvasParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f);
+        canvasParams.setMargins(dp(8), dp(2), dp(8), dp(8));
 
         collageView = new CollageView(this);
-        root.addView(collageView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        FrameLayout.LayoutParams collageParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT);
+        collageParams.setMargins(dp(2), dp(2), dp(2), dp(2));
+        canvasFrame.addView(collageView, collageParams);
+        root.addView(canvasFrame, canvasParams);
 
-        HorizontalScrollView scroller = new HorizontalScrollView(this);
-        scroller.setHorizontalScrollBarEnabled(false);
-        scroller.setFillViewport(false);
-        scroller.setBackgroundColor(Color.rgb(24, 24, 27));
-
-        LinearLayout tools = new LinearLayout(this);
-        tools.setOrientation(LinearLayout.HORIZONTAL);
-        tools.setGravity(Gravity.CENTER_VERTICAL);
-        tools.setPadding(dp(8), dp(8), dp(8), dp(10));
-
-        ImageButton addPhoto = iconButton(
-                android.R.drawable.ic_menu_gallery, "Добавить фото");
-        ImageButton text = iconButton(
-                android.R.drawable.ic_menu_edit, "Добавить или изменить текст");
-        ImageButton cropPhoto = iconButton(
-                android.R.drawable.ic_menu_crop, "Обрезать выбранное фото");
-        eraserButton = iconButton(
-                android.R.drawable.ic_menu_close_clear_cancel, "Ластик");
-        ImageButton rotate = iconButton(
-                android.R.drawable.ic_menu_rotate, "Повернуть слой");
-        ImageButton fill = iconButton(
-                android.R.drawable.ic_menu_manage, "Цвет фона");
-        ImageButton canvas = iconButton(
-                android.R.drawable.ic_menu_mapmode, "Формат холста");
-        ImageButton trimCanvas = iconButton(
-                android.R.drawable.ic_menu_zoom, "Обрезать пустой холст");
-        ImageButton backward = iconButton(
-                android.R.drawable.arrow_down_float, "Слой ниже");
-        ImageButton forward = iconButton(
-                android.R.drawable.arrow_up_float, "Слой выше");
-        ImageButton delete = iconButton(
-                android.R.drawable.ic_menu_delete, "Удалить слой");
-
-        tools.addView(addPhoto);
-        tools.addView(text);
-        tools.addView(cropPhoto);
-        tools.addView(eraserButton);
-        tools.addView(rotate);
-        tools.addView(fill);
-        tools.addView(canvas);
-        tools.addView(trimCanvas);
-        tools.addView(backward);
-        tools.addView(forward);
-        tools.addView(delete);
-
-        scroller.addView(tools);
-        root.addView(scroller, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(72)));
+        root.addView(buildBottomPanel(), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
 
         shell.addView(root, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
+
         setContentView(shell);
         showStartupOverlay(shell);
 
-        addPhoto.setOnClickListener(v -> chooseImages());
-        text.setOnClickListener(v -> showTextDialog());
-        cropPhoto.setOnClickListener(v -> showCropDialog());
-        rotate.setOnClickListener(v -> showRotateDialog());
+        updateHistoryButtons();
+    }
 
-        fill.setOnClickListener(v -> showColorDialog(
-                "Цвет фона",
-                collageView.getBackgroundColorValue(),
-                color -> {
-                    collageView.setBackgroundFill(color);
-                    updateHistoryButtons();
-                }));
+    private View buildTopBar() {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setPadding(dp(14), dp(7), dp(8), dp(7));
+        bar.setBackgroundColor(PANEL);
+        bar.setElevation(dp(5));
 
-        canvas.setOnClickListener(v -> showCanvasDialog());
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.ic_simplepix_logo);
+        logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        bar.addView(logo, new LinearLayout.LayoutParams(dp(38), dp(38)));
 
-        trimCanvas.setOnClickListener(v -> {
-            if (!collageView.cropCanvasToContent()) {
-                Toast.makeText(
-                        this,
-                        "Пустых краёв для обрезки нет",
-                        Toast.LENGTH_SHORT).show();
-            }
-            updateHistoryButtons();
-        });
+        LinearLayout titles = new LinearLayout(this);
+        titles.setOrientation(LinearLayout.VERTICAL);
+        titles.setGravity(Gravity.CENTER_VERTICAL);
+        titles.setPadding(dp(8), 0, 0, 0);
 
-        eraserButton.setOnClickListener(v -> toggleEraser());
+        TextView title = new TextView(this);
+        title.setText("SimplePix");
+        title.setTextColor(TEXT);
+        title.setTextSize(19);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
 
-        backward.setOnClickListener(v -> {
-            collageView.sendSelectedBackward();
-            updateHistoryButtons();
-        });
+        TextView subtitle = new TextView(this);
+        subtitle.setText("COLLAGE EDITOR");
+        subtitle.setTextColor(MUTED);
+        subtitle.setTextSize(9);
+        subtitle.setLetterSpacing(0.12f);
 
-        forward.setOnClickListener(v -> {
-            collageView.bringSelectedForward();
-            updateHistoryButtons();
-        });
+        titles.addView(title);
+        titles.addView(subtitle);
+        bar.addView(titles, new LinearLayout.LayoutParams(0, dp(46), 1f));
 
-        delete.setOnClickListener(v -> {
-            collageView.deleteSelected();
-            collageView.setEraserMode(false);
-            updateEraserButton();
-            updateHistoryButtons();
-        });
+        undoButton = topIconButton(android.R.drawable.ic_menu_revert, "Отменить");
+        redoButton = topIconButton(android.R.drawable.ic_menu_recent_history, "Повторить");
+        ImageButton save = topIconButton(android.R.drawable.ic_menu_save, "Сохранить");
 
         undoButton.setOnClickListener(v -> {
             if (!collageView.undo()) {
                 Toast.makeText(this, "Отменять нечего", Toast.LENGTH_SHORT).show();
             }
-            updateEraserButton();
             updateHistoryButtons();
+            updateEraserChip();
         });
 
         redoButton.setOnClickListener(v -> {
             if (!collageView.redo()) {
                 Toast.makeText(this, "Повторять нечего", Toast.LENGTH_SHORT).show();
             }
-            updateEraserButton();
             updateHistoryButtons();
+            updateEraserChip();
         });
 
-        saveButton.setOnClickListener(v -> saveCollage());
+        save.setOnClickListener(v -> saveCollage());
 
-        updateHistoryButtons();
-        updateEraserButton();
+        bar.addView(undoButton);
+        bar.addView(redoButton);
+        bar.addView(save);
+        return bar;
     }
 
-    private ImageButton iconButton(int drawableRes, String description) {
+    private View buildBottomPanel() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(8), dp(4), dp(8), dp(8));
+        panel.setBackground(roundedTopDrawable(PANEL, 22));
+        panel.setElevation(dp(8));
+
+        paletteScroller = new HorizontalScrollView(this);
+        paletteScroller.setHorizontalScrollBarEnabled(false);
+        paletteScroller.setFillViewport(false);
+        paletteScroller.setVisibility(View.GONE);
+        paletteScroller.setAlpha(0f);
+
+        paletteRow = new LinearLayout(this);
+        paletteRow.setOrientation(LinearLayout.HORIZONTAL);
+        paletteRow.setGravity(Gravity.CENTER_VERTICAL);
+        paletteRow.setPadding(dp(3), dp(5), dp(3), dp(7));
+        paletteScroller.addView(paletteRow);
+
+        panel.addView(paletteScroller, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(62)));
+
+        LinearLayout groups = new LinearLayout(this);
+        groups.setOrientation(LinearLayout.HORIZONTAL);
+        groups.setGravity(Gravity.CENTER);
+
+        TextView add = groupButton(android.R.drawable.ic_input_add, "Добавить");
+        TextView edit = groupButton(android.R.drawable.ic_menu_edit, "Правка");
+        TextView layers = groupButton(android.R.drawable.arrow_up_float, "Слои");
+        TextView canvas = groupButton(android.R.drawable.ic_menu_crop, "Холст");
+
+        add.setOnClickListener(v -> togglePalette("add", add));
+        edit.setOnClickListener(v -> togglePalette("edit", edit));
+        layers.setOnClickListener(v -> togglePalette("layers", layers));
+        canvas.setOnClickListener(v -> togglePalette("canvas", canvas));
+
+        groups.addView(add, weightedGroupParams());
+        groups.addView(edit, weightedGroupParams());
+        groups.addView(layers, weightedGroupParams());
+        groups.addView(canvas, weightedGroupParams());
+
+        panel.addView(groups, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(64)));
+
+        return panel;
+    }
+
+    private LinearLayout.LayoutParams weightedGroupParams() {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                1f);
+        p.setMargins(dp(3), 0, dp(3), 0);
+        return p;
+    }
+
+    private ImageButton topIconButton(int drawableRes, String description) {
         ImageButton button = new ImageButton(this);
         button.setImageResource(drawableRes);
-        button.setColorFilter(Color.WHITE);
+        button.setColorFilter(TEXT);
         button.setContentDescription(description);
         button.setTooltipText(description);
         button.setScaleType(ImageButton.ScaleType.CENTER_INSIDE);
         button.setPadding(dp(11), dp(11), dp(11), dp(11));
-        button.setBackground(buttonBackground(Color.rgb(55, 55, 62)));
+        button.setBackground(roundedDrawable(CHIP, 13));
 
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                dp(48), dp(48));
-        params.setMargins(dp(4), 0, dp(4), 0);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(44), dp(44));
+        params.setMargins(dp(4), 0, 0, 0);
         button.setLayoutParams(params);
         return button;
     }
 
-    private GradientDrawable buttonBackground(int color) {
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(color);
-        bg.setCornerRadius(dp(12));
-        return bg;
+    private TextView groupButton(int drawableRes, String label) {
+        TextView view = new TextView(this);
+        view.setText(label);
+        view.setTextColor(MUTED);
+        view.setTextSize(11);
+        view.setGravity(Gravity.CENTER);
+        view.setPadding(dp(4), dp(6), dp(4), dp(5));
+        view.setBackground(roundedDrawable(Color.TRANSPARENT, 14));
+        view.setContentDescription(label);
+
+        Drawable icon = getDrawable(drawableRes);
+        if (icon != null) {
+            icon = icon.mutate();
+            icon.setTint(MUTED);
+            icon.setBounds(0, 0, dp(22), dp(22));
+            view.setCompoundDrawables(null, icon, null, null);
+            view.setCompoundDrawablePadding(dp(3));
+        }
+
+        groupButtons.add(view);
+        return view;
+    }
+
+    private TextView toolChip(int drawableRes, String label, View.OnClickListener listener) {
+        TextView view = new TextView(this);
+        view.setText(label);
+        view.setTextColor(TEXT);
+        view.setTextSize(13);
+        view.setGravity(Gravity.CENTER_VERTICAL);
+        view.setPadding(dp(13), 0, dp(15), 0);
+        view.setMinHeight(dp(46));
+        view.setBackground(roundedDrawable(CHIP, 15));
+        view.setContentDescription(label);
+
+        Drawable icon = getDrawable(drawableRes);
+        if (icon != null) {
+            icon = icon.mutate();
+            icon.setTint(TEXT);
+            icon.setBounds(0, 0, dp(20), dp(20));
+            view.setCompoundDrawables(icon, null, null, null);
+            view.setCompoundDrawablePadding(dp(8));
+        }
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                dp(46));
+        params.setMargins(dp(4), 0, dp(4), 0);
+        view.setLayoutParams(params);
+        view.setOnClickListener(listener);
+        return view;
+    }
+
+    private void togglePalette(String group, TextView pressed) {
+        if (group.equals(activeGroup) && paletteScroller.getVisibility() == View.VISIBLE) {
+            closePalette();
+            return;
+        }
+
+        activeGroup = group;
+        updateGroupStyles(pressed);
+
+        if (paletteScroller.getVisibility() == View.VISIBLE) {
+            paletteScroller.animate()
+                    .alpha(0f)
+                    .translationY(dp(8))
+                    .setDuration(85)
+                    .withEndAction(() -> {
+                        populatePalette(group);
+                        paletteScroller.setTranslationY(dp(14));
+                        paletteScroller.animate()
+                                .alpha(1f)
+                                .translationY(0f)
+                                .setDuration(170)
+                                .start();
+                    })
+                    .start();
+        } else {
+            populatePalette(group);
+            paletteScroller.setVisibility(View.VISIBLE);
+            paletteScroller.setAlpha(0f);
+            paletteScroller.setTranslationY(dp(18));
+            paletteScroller.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(190)
+                    .start();
+        }
+    }
+
+    private void closePalette() {
+        activeGroup = null;
+        updateGroupStyles(null);
+        paletteScroller.animate()
+                .alpha(0f)
+                .translationY(dp(16))
+                .setDuration(140)
+                .withEndAction(() -> {
+                    paletteScroller.setVisibility(View.GONE);
+                    paletteScroller.setTranslationY(0f);
+                })
+                .start();
+    }
+
+    private void updateGroupStyles(TextView active) {
+        for (TextView view : groupButtons) {
+            boolean selected = view == active;
+            view.setTextColor(selected ? TEXT : MUTED);
+            view.setBackground(roundedDrawable(
+                    selected ? CHIP_ACTIVE : Color.TRANSPARENT,
+                    14));
+
+            Drawable[] drawables = view.getCompoundDrawables();
+            if (drawables[1] != null) {
+                drawables[1].setTint(selected ? TEXT : MUTED);
+            }
+        }
+    }
+
+    private void populatePalette(String group) {
+        paletteRow.removeAllViews();
+        eraserChip = null;
+
+        switch (group) {
+            case "add":
+                paletteRow.addView(toolChip(
+                        android.R.drawable.ic_menu_gallery,
+                        "Фото",
+                        v -> chooseImages()));
+                paletteRow.addView(toolChip(
+                        android.R.drawable.ic_menu_edit,
+                        "Текст",
+                        v -> showTextDialog()));
+                paletteRow.addView(toolChip(
+                        android.R.drawable.ic_input_add,
+                        "Фигура",
+                        v -> showShapeDialog()));
+                break;
+
+            case "edit":
+                paletteRow.addView(toolChip(
+                        android.R.drawable.ic_menu_crop,
+                        "Обрезка фото",
+                        v -> showCropDialog()));
+                paletteRow.addView(toolChip(
+                        android.R.drawable.ic_menu_rotate,
+                        "Поворот",
+                        v -> showRotateDialog()));
+
+                eraserChip = toolChip(
+                        android.R.drawable.ic_menu_close_clear_cancel,
+                        "Ластик",
+                        v -> toggleEraser());
+                paletteRow.addView(eraserChip);
+
+                paletteRow.addView(toolChip(
+                        android.R.drawable.ic_menu_manage,
+                        "Заливка",
+                        v -> editSelectedFill()));
+                updateEraserChip();
+                break;
+
+            case "layers":
+                paletteRow.addView(toolChip(
+                        android.R.drawable.arrow_down_float,
+                        "Ниже",
+                        v -> {
+                            collageView.sendSelectedBackward();
+                            updateHistoryButtons();
+                        }));
+                paletteRow.addView(toolChip(
+                        android.R.drawable.arrow_up_float,
+                        "Выше",
+                        v -> {
+                            collageView.bringSelectedForward();
+                            updateHistoryButtons();
+                        }));
+                paletteRow.addView(toolChip(
+                        android.R.drawable.ic_menu_delete,
+                        "Удалить",
+                        v -> {
+                            collageView.deleteSelected();
+                            collageView.setEraserMode(false);
+                            updateHistoryButtons();
+                            updateEraserChip();
+                        }));
+                break;
+
+            case "canvas":
+            default:
+                paletteRow.addView(toolChip(
+                        android.R.drawable.ic_menu_mapmode,
+                        "Формат",
+                        v -> showCanvasDialog()));
+                paletteRow.addView(toolChip(
+                        android.R.drawable.ic_menu_zoom,
+                        "По содержимому",
+                        v -> {
+                            if (!collageView.cropCanvasToContent()) {
+                                Toast.makeText(
+                                        this,
+                                        "Пустых краёв для обрезки нет",
+                                        Toast.LENGTH_SHORT).show();
+                            }
+                            updateHistoryButtons();
+                        }));
+                paletteRow.addView(toolChip(
+                        android.R.drawable.ic_menu_manage,
+                        "Фон",
+                        v -> showColorDialog(
+                                "Цвет фона",
+                                collageView.getBackgroundColorValue(),
+                                color -> {
+                                    collageView.setBackgroundFill(color);
+                                    updateHistoryButtons();
+                                })));
+                break;
+        }
     }
 
     private void chooseImages() {
@@ -259,7 +491,6 @@ public class MainActivity extends Activity {
         }
 
         updateHistoryButtons();
-        updateEraserButton();
     }
 
     private void loadImage(Uri uri) {
@@ -285,6 +516,105 @@ public class MainActivity extends Activity {
         } catch (IOException e) {
             Toast.makeText(this, "Не удалось открыть изображение", Toast.LENGTH_SHORT).show();
         }
+    }
+
+    private void showShapeDialog() {
+        final int[] color = {ACCENT};
+
+        LinearLayout box = dialogColumn();
+
+        Button colorButton = new Button(this);
+        colorButton.setAllCaps(false);
+        updateColorButton(colorButton, color[0], "Заливка");
+        box.addView(colorButton, fullWidth());
+
+        LinearLayout row1 = new LinearLayout(this);
+        row1.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout row2 = new LinearLayout(this);
+        row2.setOrientation(LinearLayout.HORIZONTAL);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Добавить фигуру")
+                .setView(box)
+                .setNegativeButton("Отмена", null)
+                .create();
+
+        Button rect = shapeButton("▭  Прямоугольник");
+        Button round = shapeButton("▢  Скруглённая");
+        Button ellipse = shapeButton("●  Эллипс");
+        Button triangle = shapeButton("▲  Треугольник");
+
+        row1.addView(rect, halfWidth());
+        row1.addView(round, halfWidth());
+        row2.addView(ellipse, halfWidth());
+        row2.addView(triangle, halfWidth());
+
+        box.addView(row1, fullWidth());
+        box.addView(row2, fullWidth());
+
+        colorButton.setOnClickListener(v -> showColorDialog(
+                "Цвет заливки",
+                color[0],
+                selected -> {
+                    color[0] = selected;
+                    updateColorButton(colorButton, selected, "Заливка");
+                }));
+
+        rect.setOnClickListener(v -> {
+            collageView.addShape(CollageView.SHAPE_RECT, color[0]);
+            updateHistoryButtons();
+            dialog.dismiss();
+        });
+        round.setOnClickListener(v -> {
+            collageView.addShape(CollageView.SHAPE_ROUNDED_RECT, color[0]);
+            updateHistoryButtons();
+            dialog.dismiss();
+        });
+        ellipse.setOnClickListener(v -> {
+            collageView.addShape(CollageView.SHAPE_ELLIPSE, color[0]);
+            updateHistoryButtons();
+            dialog.dismiss();
+        });
+        triangle.setOnClickListener(v -> {
+            collageView.addShape(CollageView.SHAPE_TRIANGLE, color[0]);
+            updateHistoryButtons();
+            dialog.dismiss();
+        });
+
+        dialog.show();
+    }
+
+    private Button shapeButton(String label) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setAllCaps(false);
+        button.setTextSize(12);
+        button.setPadding(dp(5), dp(2), dp(5), dp(2));
+        return button;
+    }
+
+    private LinearLayout.LayoutParams halfWidth() {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(
+                0,
+                dp(52),
+                1f);
+        p.setMargins(dp(3), dp(4), dp(3), 0);
+        return p;
+    }
+
+    private void editSelectedFill() {
+        if (!collageView.isShapeSelected()) {
+            Toast.makeText(this, "Выберите фигуру", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        showColorDialog(
+                "Заливка фигуры",
+                collageView.getSelectedShapeColor(),
+                color -> {
+                    collageView.setSelectedShapeColor(color);
+                    updateHistoryButtons();
+                });
     }
 
     private void showTextDialog() {
@@ -418,21 +748,18 @@ public class MainActivity extends Activity {
 
         SeekBar seek = new SeekBar(this);
         seek.setMax(360);
-        seek.setProgress(Math.round(original) + 180);
+        seek.setProgress(Math.max(0, Math.min(360, Math.round(original) + 180)));
 
-        Runnable updateLabel = () -> {
-            int degrees = seek.getProgress() - 180;
-            label.setText("Поворот: " + degrees + "°");
-        };
+        Runnable updateLabel = () ->
+                label.setText("Поворот: " + (seek.getProgress() - 180) + "°");
         updateLabel.run();
 
         seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                int degrees = progress - 180;
                 updateLabel.run();
                 if (fromUser) {
-                    collageView.setSelectedRotationDegrees(degrees, false);
+                    collageView.setSelectedRotationDegrees(progress - 180f, false);
                     changed[0] = true;
                 }
             }
@@ -484,11 +811,11 @@ public class MainActivity extends Activity {
 
         if (wanted && !enabled) {
             Toast.makeText(this, "Сначала выберите фотографию", Toast.LENGTH_SHORT).show();
-            updateEraserButton();
+            updateEraserChip();
             return;
         }
 
-        updateEraserButton();
+        updateEraserChip();
 
         if (enabled && wanted) {
             showEraserSizeDialog();
@@ -521,7 +848,7 @@ public class MainActivity extends Activity {
                         collageView.setEraserRadiusDp(size.getProgress() + 4f))
                 .setNeutralButton("Выключить", (dialog, which) -> {
                     collageView.setEraserMode(false);
-                    updateEraserButton();
+                    updateEraserChip();
                 })
                 .show();
     }
@@ -564,8 +891,10 @@ public class MainActivity extends Activity {
         preview.setGravity(Gravity.CENTER);
         preview.setTextColor(contrastText(initialColor));
         preview.setTextSize(16);
+        preview.setBackground(roundedDrawable(initialColor, 14));
         box.addView(preview, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(52)));
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(54)));
 
         TextView rLabel = dialogLabel("R");
         SeekBar r = colorSeek(Color.red(initialColor));
@@ -583,7 +912,7 @@ public class MainActivity extends Activity {
 
         Runnable update = () -> {
             int color = Color.rgb(r.getProgress(), g.getProgress(), b.getProgress());
-            preview.setBackgroundColor(color);
+            preview.setBackground(roundedDrawable(color, 14));
             preview.setTextColor(contrastText(color));
             preview.setText(String.format(
                     Locale.US,
@@ -637,27 +966,10 @@ public class MainActivity extends Activity {
         };
     }
 
-    private void updateColorButton(Button button, int color, String prefix) {
-        button.setText(String.format(
-                Locale.US,
-                "%s  #%02X%02X%02X",
-                prefix,
-                Color.red(color),
-                Color.green(color),
-                Color.blue(color)));
-    }
-
-    private int contrastText(int color) {
-        double luminance = 0.299 * Color.red(color)
-                + 0.587 * Color.green(color)
-                + 0.114 * Color.blue(color);
-        return luminance > 150 ? Color.BLACK : Color.WHITE;
-    }
-
     private LinearLayout dialogColumn() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(8), dp(20), dp(4));
+        box.setPadding(dp(20), dp(8), dp(20), dp(6));
         return box;
     }
 
@@ -675,20 +987,34 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
     }
 
-    private void updateEraserButton() {
-        if (eraserButton == null) return;
+    private void updateColorButton(Button button, int color, String prefix) {
+        button.setText(String.format(
+                Locale.US,
+                "%s  #%02X%02X%02X",
+                prefix,
+                Color.red(color),
+                Color.green(color),
+                Color.blue(color)));
+    }
 
-        eraserButton.setBackground(buttonBackground(
-                collageView.isEraserMode()
-                        ? Color.rgb(84, 92, 190)
-                        : Color.rgb(55, 55, 62)));
+    private int contrastText(int color) {
+        double luminance = 0.299 * Color.red(color)
+                + 0.587 * Color.green(color)
+                + 0.114 * Color.blue(color);
+        return luminance > 150 ? Color.BLACK : Color.WHITE;
+    }
+
+    private void updateEraserChip() {
+        if (eraserChip == null) return;
+        eraserChip.setBackground(roundedDrawable(
+                collageView.isEraserMode() ? CHIP_ACTIVE : CHIP,
+                15));
     }
 
     private void updateHistoryButtons() {
-        if (undoButton == null || redoButton == null) return;
-
-        undoButton.setAlpha(collageView.canUndo() ? 1f : 0.45f);
-        redoButton.setAlpha(collageView.canRedo() ? 1f : 0.45f);
+        if (undoButton == null || redoButton == null || collageView == null) return;
+        undoButton.setAlpha(collageView.canUndo() ? 1f : 0.38f);
+        redoButton.setAlpha(collageView.canRedo() ? 1f : 0.38f);
     }
 
     private void saveCollage() {
@@ -702,7 +1028,8 @@ public class MainActivity extends Activity {
         values.put(MediaStore.Images.Media.IS_PENDING, 1);
 
         Uri uri = getContentResolver().insert(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                values);
 
         if (uri == null) {
             Toast.makeText(this, "Не удалось создать файл", Toast.LENGTH_SHORT).show();
@@ -728,7 +1055,7 @@ public class MainActivity extends Activity {
         LinearLayout overlay = new LinearLayout(this);
         overlay.setOrientation(LinearLayout.VERTICAL);
         overlay.setGravity(Gravity.CENTER);
-        overlay.setBackgroundColor(Color.rgb(18, 18, 20));
+        overlay.setBackgroundColor(BG);
         overlay.setClickable(true);
 
         ImageView logo = new ImageView(this);
@@ -741,7 +1068,7 @@ public class MainActivity extends Activity {
 
         TextView splashTitle = new TextView(this);
         splashTitle.setText("SimplePix");
-        splashTitle.setTextColor(Color.WHITE);
+        splashTitle.setTextColor(TEXT);
         splashTitle.setTextSize(28);
         splashTitle.setGravity(Gravity.CENTER);
         splashTitle.setTypeface(null, android.graphics.Typeface.BOLD);
@@ -756,16 +1083,32 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
-        overlay.setAlpha(1f);
         new Handler(Looper.getMainLooper()).postDelayed(() ->
                 overlay.animate()
                         .alpha(0f)
-                        .setDuration(140L)
+                        .scaleX(1.03f)
+                        .scaleY(1.03f)
+                        .setDuration(160L)
                         .withEndAction(() -> shell.removeView(overlay))
-                        .start(), 360L);
+                        .start(), 330L);
     }
 
-    private int dp(int value) {
+    private GradientDrawable roundedDrawable(int color, float radiusDp) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(color);
+        bg.setCornerRadius(dp(radiusDp));
+        return bg;
+    }
+
+    private GradientDrawable roundedTopDrawable(int color, float radiusDp) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(color);
+        float r = dp(radiusDp);
+        bg.setCornerRadii(new float[] {r, r, r, r, 0, 0, 0, 0});
+        return bg;
+    }
+
+    private int dp(float value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 }
