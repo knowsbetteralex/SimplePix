@@ -89,6 +89,13 @@ public class MainActivity extends Activity {
         canvasParams.setMargins(dp(8), dp(2), dp(8), dp(8));
 
         collageView = new CollageView(this);
+        collageView.setOnSelectionChangedListener(() -> {
+            if (activeGroup != null
+                    && paletteScroller != null
+                    && paletteScroller.getVisibility() == View.VISIBLE) {
+                populatePalette(activeGroup);
+            }
+        });
         FrameLayout.LayoutParams collageParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT);
@@ -270,20 +277,32 @@ public class MainActivity extends Activity {
     }
 
     private TextView toolChip(int drawableRes, String label, View.OnClickListener listener) {
+        return toolChip(drawableRes, label, true, null, listener);
+    }
+
+    private TextView toolChip(
+            int drawableRes,
+            String label,
+            boolean available,
+            String unavailableHint,
+            View.OnClickListener listener) {
         TextView view = new TextView(this);
         view.setText(label);
-        view.setTextColor(TEXT);
+        view.setTextColor(available ? TEXT : MUTED);
         view.setTextSize(13);
         view.setGravity(Gravity.CENTER_VERTICAL);
         view.setPadding(dp(13), 0, dp(15), 0);
         view.setMinHeight(dp(46));
-        view.setBackground(roundedDrawable(CHIP, 15));
+        view.setBackground(roundedDrawable(
+                available ? CHIP : Color.rgb(31, 34, 43),
+                15));
         view.setContentDescription(label);
+        view.setAlpha(available ? 1f : 0.42f);
 
         Drawable icon = getDrawable(drawableRes);
         if (icon != null) {
             icon = icon.mutate();
-            icon.setTint(TEXT);
+            icon.setTint(available ? TEXT : MUTED);
             icon.setBounds(0, 0, dp(20), dp(20));
             view.setCompoundDrawables(icon, null, null, null);
             view.setCompoundDrawablePadding(dp(8));
@@ -294,7 +313,14 @@ public class MainActivity extends Activity {
                 dp(46));
         params.setMargins(dp(4), 0, dp(4), 0);
         view.setLayoutParams(params);
-        view.setOnClickListener(listener);
+
+        view.setOnClickListener(v -> {
+            if (available) {
+                listener.onClick(v);
+            } else if (unavailableHint != null && !unavailableHint.isEmpty()) {
+                Toast.makeText(this, unavailableHint, Toast.LENGTH_SHORT).show();
+            }
+        });
         return view;
     }
 
@@ -385,32 +411,48 @@ public class MainActivity extends Activity {
                 break;
 
             case "edit":
+                boolean imageSelected = collageView.isImageSelected();
+                boolean anySelected = collageView.hasSelection();
+                boolean shapeSelected = collageView.isShapeSelected();
+
                 paletteRow.addView(toolChip(
                         android.R.drawable.ic_menu_crop,
                         "Обрезка фото",
+                        imageSelected,
+                        "Сначала выберите фотографию",
                         v -> showCropDialog()));
                 paletteRow.addView(toolChip(
                         android.R.drawable.ic_menu_rotate,
                         "Поворот",
+                        anySelected,
+                        "Сначала выберите слой",
                         v -> showRotateDialog()));
 
                 eraserChip = toolChip(
                         android.R.drawable.ic_menu_close_clear_cancel,
                         "Ластик",
+                        imageSelected,
+                        "Сначала выберите фотографию",
                         v -> toggleEraser());
                 paletteRow.addView(eraserChip);
 
                 paletteRow.addView(toolChip(
                         android.R.drawable.ic_menu_manage,
                         "Заливка",
+                        shapeSelected,
+                        "Сначала выберите фигуру",
                         v -> editSelectedFill()));
                 updateEraserChip();
                 break;
 
             case "layers":
+                boolean layerSelected = collageView.hasSelection();
+
                 paletteRow.addView(toolChip(
                         android.R.drawable.arrow_down_float,
                         "Ниже",
+                        layerSelected,
+                        "Сначала выберите слой",
                         v -> {
                             collageView.sendSelectedBackward();
                             updateHistoryButtons();
@@ -418,6 +460,8 @@ public class MainActivity extends Activity {
                 paletteRow.addView(toolChip(
                         android.R.drawable.arrow_up_float,
                         "Выше",
+                        layerSelected,
+                        "Сначала выберите слой",
                         v -> {
                             collageView.bringSelectedForward();
                             updateHistoryButtons();
@@ -425,6 +469,8 @@ public class MainActivity extends Activity {
                 paletteRow.addView(toolChip(
                         android.R.drawable.ic_menu_delete,
                         "Удалить",
+                        layerSelected,
+                        "Сначала выберите слой",
                         v -> {
                             collageView.deleteSelected();
                             collageView.setEraserMode(false);
@@ -706,32 +752,103 @@ public class MainActivity extends Activity {
             return;
         }
 
-        String[] names = {
-                "1:1 — квадрат",
-                "4:5 — портрет",
-                "3:4 — портрет",
-                "16:9 — широкий",
-                "9:16 — вертикальный",
-                "Срезать по 5% с каждого края"
+        if (!collageView.beginCropMode()) {
+            return;
+        }
+
+        LinearLayout box = dialogColumn();
+
+        TextView hint = dialogLabel("Рамка на фото показывает итоговую область.");
+        hint.setTextColor(MUTED);
+        box.addView(hint, fullWidth());
+
+        SeekBar left = cropSeekBar();
+        SeekBar right = cropSeekBar();
+        SeekBar top = cropSeekBar();
+        SeekBar bottom = cropSeekBar();
+
+        TextView leftLabel = dialogLabel("");
+        TextView rightLabel = dialogLabel("");
+        TextView topLabel = dialogLabel("");
+        TextView bottomLabel = dialogLabel("");
+
+        box.addView(leftLabel, fullWidth());
+        box.addView(left, fullWidth());
+        box.addView(rightLabel, fullWidth());
+        box.addView(right, fullWidth());
+        box.addView(topLabel, fullWidth());
+        box.addView(top, fullWidth());
+        box.addView(bottomLabel, fullWidth());
+        box.addView(bottom, fullWidth());
+
+        Runnable update = () -> {
+            leftLabel.setText("Слева: " + left.getProgress() + "%");
+            rightLabel.setText("Справа: " + right.getProgress() + "%");
+            topLabel.setText("Сверху: " + top.getProgress() + "%");
+            bottomLabel.setText("Снизу: " + bottom.getProgress() + "%");
+
+            collageView.updateCropInsets(
+                    left.getProgress() / 100f,
+                    right.getProgress() / 100f,
+                    top.getProgress() / 100f,
+                    bottom.getProgress() / 100f);
         };
 
-        float[] ratios = {
-                1f,
-                4f / 5f,
-                3f / 4f,
-                16f / 9f,
-                9f / 16f,
-                0f
-        };
+        left.setOnSeekBarChangeListener(simpleSeekListener(update));
+        right.setOnSeekBarChangeListener(simpleSeekListener(update));
+        top.setOnSeekBarChangeListener(simpleSeekListener(update));
+        bottom.setOnSeekBarChangeListener(simpleSeekListener(update));
+        update.run();
 
-        new AlertDialog.Builder(this)
+        final boolean[] resolved = {false};
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("Обрезка фотографии")
-                .setItems(names, (dialog, which) -> {
-                    collageView.cropSelected(ratios[which]);
-                    updateHistoryButtons();
-                })
+                .setView(box)
+                .setPositiveButton("Применить", null)
                 .setNegativeButton("Отмена", null)
-                .show();
+                .create();
+
+        dialog.setCanceledOnTouchOutside(false);
+        dialog.setOnShowListener(ignored -> {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                resolved[0] = true;
+                collageView.applyCropMode();
+                updateHistoryButtons();
+                dialog.dismiss();
+            });
+
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(v -> {
+                resolved[0] = true;
+                collageView.cancelCropMode();
+                dialog.dismiss();
+            });
+        });
+
+        dialog.setOnCancelListener(d -> {
+            resolved[0] = true;
+            collageView.cancelCropMode();
+        });
+
+        dialog.setOnDismissListener(d -> {
+            if (!resolved[0] && collageView.isCropMode()) {
+                collageView.cancelCropMode();
+            }
+            if (activeGroup != null
+                    && paletteScroller != null
+                    && paletteScroller.getVisibility() == View.VISIBLE) {
+                populatePalette(activeGroup);
+            }
+        });
+
+        dialog.show();
+    }
+
+    private SeekBar cropSeekBar() {
+        SeekBar seek = new SeekBar(this);
+        seek.setMax(45);
+        seek.setProgress(0);
+        return seek;
     }
 
     private void showRotateDialog() {
@@ -1006,8 +1123,13 @@ public class MainActivity extends Activity {
 
     private void updateEraserChip() {
         if (eraserChip == null) return;
+
+        boolean available = collageView.isImageSelected() && !collageView.isCropMode();
+        eraserChip.setAlpha(available ? 1f : 0.42f);
         eraserChip.setBackground(roundedDrawable(
-                collageView.isEraserMode() ? CHIP_ACTIVE : CHIP,
+                available && collageView.isEraserMode()
+                        ? CHIP_ACTIVE
+                        : (available ? CHIP : Color.rgb(31, 34, 43)),
                 15));
     }
 
