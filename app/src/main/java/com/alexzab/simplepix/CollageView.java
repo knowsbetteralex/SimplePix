@@ -27,6 +27,11 @@ public class CollageView extends View {
     private static final int DRAG_MOVE = 1;
     private static final int DRAG_RESIZE = 2;
 
+    public static final int SHAPE_RECT = 0;
+    public static final int SHAPE_ROUNDED_RECT = 1;
+    public static final int SHAPE_ELLIPSE = 2;
+    public static final int SHAPE_TRIANGLE = 3;
+
     private abstract static class Layer {
         final Matrix matrix = new Matrix();
         final RectF localBounds = new RectF();
@@ -188,6 +193,58 @@ public class CollageView extends View {
         }
     }
 
+    private static class ShapeLayer extends Layer {
+        int shapeType;
+        int fillColor;
+        final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        final Path path = new Path();
+
+        ShapeLayer(int shapeType, int fillColor) {
+            this.shapeType = shapeType;
+            this.fillColor = fillColor;
+            localBounds.set(0, 0, 240, 170);
+        }
+
+        @Override
+        void draw(Canvas canvas) {
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(fillColor);
+
+            canvas.save();
+            canvas.concat(matrix);
+
+            switch (shapeType) {
+                case SHAPE_ROUNDED_RECT:
+                    canvas.drawRoundRect(localBounds, 28f, 28f, paint);
+                    break;
+                case SHAPE_ELLIPSE:
+                    canvas.drawOval(localBounds, paint);
+                    break;
+                case SHAPE_TRIANGLE:
+                    path.reset();
+                    path.moveTo(localBounds.centerX(), localBounds.top);
+                    path.lineTo(localBounds.right, localBounds.bottom);
+                    path.lineTo(localBounds.left, localBounds.bottom);
+                    path.close();
+                    canvas.drawPath(path, paint);
+                    break;
+                case SHAPE_RECT:
+                default:
+                    canvas.drawRect(localBounds, paint);
+                    break;
+            }
+
+            canvas.restore();
+        }
+
+        @Override
+        Layer copyForState() {
+            ShapeLayer copy = new ShapeLayer(shapeType, fillColor);
+            copyMatrixTo(copy);
+            return copy;
+        }
+    }
+
     private static class EditorState {
         final List<Layer> layers = new ArrayList<>();
         int selectedIndex;
@@ -214,10 +271,10 @@ public class CollageView extends View {
     private int resizeHandle = -1;
     private float touchDownX;
     private float touchDownY;
-    private float resizePivotX;
-    private float resizePivotY;
-    private float resizeStartDistance;
-    private float resizeStartScale;
+    private float resizePivotLocalX;
+    private float resizePivotLocalY;
+    private float resizeStartLocalX;
+    private float resizeStartLocalY;
     private final Matrix gestureStartMatrix = new Matrix();
     private boolean gestureCheckpointed;
 
@@ -304,6 +361,31 @@ public class CollageView extends View {
         invalidate();
     }
 
+    public void addShape(int shapeType, int fillColor) {
+        checkpoint();
+
+        ShapeLayer layer = new ShapeLayer(shapeType, fillColor);
+        float cw = Math.max(canvasRect.width(), 1f);
+        float ch = Math.max(canvasRect.height(), 1f);
+        float scale = Math.min(
+                (cw * 0.46f) / layer.localBounds.width(),
+                (ch * 0.30f) / layer.localBounds.height());
+        scale = Math.max(scale, 0.18f);
+
+        float shownW = layer.localBounds.width() * scale;
+        float shownH = layer.localBounds.height() * scale;
+
+        layer.matrix.setScale(scale, scale);
+        layer.matrix.postTranslate(
+                canvasRect.centerX() - shownW / 2f,
+                canvasRect.centerY() - shownH / 2f);
+
+        layers.add(layer);
+        selectedLayer = layer;
+        eraserMode = false;
+        invalidate();
+    }
+
     public boolean updateSelectedText(
             String text,
             int color,
@@ -338,6 +420,26 @@ public class CollageView extends View {
 
     public boolean isImageSelected() {
         return selectedLayer instanceof ImageLayer;
+    }
+
+    public boolean isShapeSelected() {
+        return selectedLayer instanceof ShapeLayer;
+    }
+
+    public int getSelectedShapeColor() {
+        return selectedLayer instanceof ShapeLayer
+                ? ((ShapeLayer) selectedLayer).fillColor
+                : Color.WHITE;
+    }
+
+    public boolean setSelectedShapeColor(int color) {
+        if (!(selectedLayer instanceof ShapeLayer)) return false;
+        ShapeLayer layer = (ShapeLayer) selectedLayer;
+        if (layer.fillColor == color) return true;
+        checkpoint();
+        layer.fillColor = color;
+        invalidate();
+        return true;
     }
 
     public String getSelectedText() {
@@ -627,9 +729,10 @@ public class CollageView extends View {
         selectionPath.close();
         canvas.drawPath(selectionPath, selectionPaint);
 
-        for (int i = 0; i < 4; i++) {
-            float x = c[i * 2];
-            float y = c[i * 2 + 1];
+        float[] handles = selectionHandlePoints(c);
+        for (int i = 0; i < 8; i++) {
+            float x = handles[i * 2];
+            float y = handles[i * 2 + 1];
             canvas.drawCircle(x, y, handleRadiusPx, handleFillPaint);
             canvas.drawCircle(x, y, handleRadiusPx, handleStrokePaint);
         }
@@ -737,26 +840,30 @@ public class CollageView extends View {
                         invalidate();
                     }
                 } else if (dragMode == DRAG_RESIZE) {
-                    float distance = distance(
-                            event.getX(),
-                            event.getY(),
-                            resizePivotX,
-                            resizePivotY);
+                    float[] local = mapViewToStartLocal(event.getX(), event.getY());
+                    if (local != null) {
+                        float sx = 1f;
+                        float sy = 1f;
 
-                    if (resizeStartDistance > 1f && distance > 1f) {
-                        float factor = distance / resizeStartDistance;
-                        float wantedScale = resizeStartScale * factor;
-                        wantedScale = Math.max(0.06f, Math.min(wantedScale, 16f));
-                        factor = wantedScale / Math.max(resizeStartScale, 0.0001f);
+                        if (resizeHandle != 1 && resizeHandle != 5) {
+                            float denominator = resizeStartLocalX - resizePivotLocalX;
+                            if (Math.abs(denominator) > 0.001f) {
+                                sx = clampScale(
+                                        (local[0] - resizePivotLocalX) / denominator);
+                            }
+                        }
 
-                        if (Math.abs(factor - 1f) > 0.003f) {
+                        if (resizeHandle != 3 && resizeHandle != 7) {
+                            float denominator = resizeStartLocalY - resizePivotLocalY;
+                            if (Math.abs(denominator) > 0.001f) {
+                                sy = clampScale(
+                                        (local[1] - resizePivotLocalY) / denominator);
+                            }
+                        }
+
+                        if (Math.abs(sx - 1f) > 0.003f || Math.abs(sy - 1f) > 0.003f) {
                             checkpointGestureIfNeeded();
-                            selectedLayer.matrix.set(gestureStartMatrix);
-                            selectedLayer.matrix.postScale(
-                                    factor,
-                                    factor,
-                                    resizePivotX,
-                                    resizePivotY);
+                            applyLocalScale(sx, sy);
                             invalidate();
                         }
                     }
@@ -809,25 +916,115 @@ public class CollageView extends View {
         resizeHandle = handle;
         dragMode = DRAG_RESIZE;
         gestureStartMatrix.set(selectedLayer.matrix);
-        resizeStartScale = selectedLayer.scale();
 
-        float[] c = selectedLayer.transformedCorners();
-        int opposite = (handle + 2) % 4;
-        resizePivotX = c[opposite * 2];
-        resizePivotY = c[opposite * 2 + 1];
-        resizeStartDistance = distance(x, y, resizePivotX, resizePivotY);
+        float[] startLocal = mapViewToStartLocal(x, y);
+        if (startLocal == null) {
+            dragMode = DRAG_NONE;
+            resizeHandle = -1;
+            return;
+        }
+
+        resizeStartLocalX = startLocal[0];
+        resizeStartLocalY = startLocal[1];
+
+        RectF b = selectedLayer.localBounds;
+        switch (handle) {
+            case 0:
+                resizePivotLocalX = b.right;
+                resizePivotLocalY = b.bottom;
+                break;
+            case 1:
+                resizePivotLocalX = b.centerX();
+                resizePivotLocalY = b.bottom;
+                break;
+            case 2:
+                resizePivotLocalX = b.left;
+                resizePivotLocalY = b.bottom;
+                break;
+            case 3:
+                resizePivotLocalX = b.left;
+                resizePivotLocalY = b.centerY();
+                break;
+            case 4:
+                resizePivotLocalX = b.left;
+                resizePivotLocalY = b.top;
+                break;
+            case 5:
+                resizePivotLocalX = b.centerX();
+                resizePivotLocalY = b.top;
+                break;
+            case 6:
+                resizePivotLocalX = b.right;
+                resizePivotLocalY = b.top;
+                break;
+            case 7:
+            default:
+                resizePivotLocalX = b.right;
+                resizePivotLocalY = b.centerY();
+                break;
+        }
     }
 
     private int findResizeHandle(float x, float y) {
         if (selectedLayer == null) return -1;
-        float[] c = selectedLayer.transformedCorners();
+        float[] handles = selectionHandlePoints(selectedLayer.transformedCorners());
 
-        for (int i = 0; i < 4; i++) {
-            if (distance(x, y, c[i * 2], c[i * 2 + 1]) <= handleHitRadiusPx) {
+        for (int i = 0; i < 8; i++) {
+            if (distance(x, y, handles[i * 2], handles[i * 2 + 1]) <= handleHitRadiusPx) {
                 return i;
             }
         }
         return -1;
+    }
+
+    private float[] selectionHandlePoints(float[] c) {
+        return new float[] {
+                c[0], c[1],
+                (c[0] + c[2]) / 2f, (c[1] + c[3]) / 2f,
+                c[2], c[3],
+                (c[2] + c[4]) / 2f, (c[3] + c[5]) / 2f,
+                c[4], c[5],
+                (c[4] + c[6]) / 2f, (c[5] + c[7]) / 2f,
+                c[6], c[7],
+                (c[6] + c[0]) / 2f, (c[7] + c[1]) / 2f
+        };
+    }
+
+    private float[] mapViewToStartLocal(float x, float y) {
+        Matrix inverse = new Matrix();
+        if (!gestureStartMatrix.invert(inverse)) return null;
+        float[] p = {x, y};
+        inverse.mapPoints(p);
+        return p;
+    }
+
+    private float clampScale(float value) {
+        if (Float.isNaN(value) || Float.isInfinite(value)) return 1f;
+        return Math.max(0.06f, Math.min(value, 18f));
+    }
+
+    private void applyLocalScale(float sx, float sy) {
+        float[] v = new float[9];
+        gestureStartMatrix.getValues(v);
+
+        float a = v[Matrix.MSCALE_X];
+        float b = v[Matrix.MSKEW_X];
+        float c = v[Matrix.MSKEW_Y];
+        float d = v[Matrix.MSCALE_Y];
+        float tx = v[Matrix.MTRANS_X];
+        float ty = v[Matrix.MTRANS_Y];
+
+        float px = resizePivotLocalX;
+        float py = resizePivotLocalY;
+
+        v[Matrix.MSCALE_X] = a * sx;
+        v[Matrix.MSKEW_X] = b * sy;
+        v[Matrix.MSKEW_Y] = c * sx;
+        v[Matrix.MSCALE_Y] = d * sy;
+        v[Matrix.MTRANS_X] = tx + a * px * (1f - sx) + b * py * (1f - sy);
+        v[Matrix.MTRANS_Y] = ty + c * px * (1f - sx) + d * py * (1f - sy);
+
+        selectedLayer.matrix.setValues(v);
     }
 
     private Layer findTopLayer(float x, float y) {
