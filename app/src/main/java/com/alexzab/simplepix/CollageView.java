@@ -22,6 +22,10 @@ import java.util.List;
 
 public class CollageView extends View {
 
+    public interface OnSelectionChangedListener {
+        void onSelectionChanged();
+    }
+
     private static final int MAX_HISTORY = 25;
     private static final int DRAG_NONE = 0;
     private static final int DRAG_MOVE = 1;
@@ -267,6 +271,15 @@ public class CollageView extends View {
     private boolean eraserMode;
     private float eraserRadiusPx;
 
+    private boolean cropMode;
+    private final RectF cropRectLocal = new RectF();
+    private float cropLeftFraction;
+    private float cropRightFraction;
+    private float cropTopFraction;
+    private float cropBottomFraction;
+
+    private OnSelectionChangedListener selectionChangedListener;
+
     private int dragMode = DRAG_NONE;
     private int resizeHandle = -1;
     private float touchDownX;
@@ -284,6 +297,9 @@ public class CollageView extends View {
     private final Paint workspacePaint = new Paint();
     private final Paint canvasPaint = new Paint();
     private final Path selectionPath = new Path();
+    private final Paint cropShadePaint = new Paint();
+    private final Paint cropFramePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint cropGridPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     private final float handleRadiusPx;
     private final float handleHitRadiusPx;
@@ -312,6 +328,26 @@ public class CollageView extends View {
         handleStrokePaint.setStyle(Paint.Style.STROKE);
         handleStrokePaint.setStrokeWidth(dp(2));
         handleStrokePaint.setColor(Color.rgb(65, 85, 220));
+
+        cropShadePaint.setColor(0x99000000);
+
+        cropFramePaint.setStyle(Paint.Style.STROKE);
+        cropFramePaint.setStrokeWidth(dp(2));
+        cropFramePaint.setColor(Color.WHITE);
+
+        cropGridPaint.setStyle(Paint.Style.STROKE);
+        cropGridPaint.setStrokeWidth(dp(1));
+        cropGridPaint.setColor(0x99FFFFFF);
+    }
+
+    public void setOnSelectionChangedListener(OnSelectionChangedListener listener) {
+        selectionChangedListener = listener;
+    }
+
+    private void notifySelectionChanged() {
+        if (selectionChangedListener != null) {
+            selectionChangedListener.onSelectionChanged();
+        }
     }
 
     public void addImage(Bitmap bitmap) {
@@ -337,6 +373,8 @@ public class CollageView extends View {
         layers.add(layer);
         selectedLayer = layer;
         eraserMode = false;
+        cropMode = false;
+        notifySelectionChanged();
         invalidate();
     }
 
@@ -358,6 +396,8 @@ public class CollageView extends View {
         layers.add(layer);
         selectedLayer = layer;
         eraserMode = false;
+        cropMode = false;
+        notifySelectionChanged();
         invalidate();
     }
 
@@ -383,6 +423,8 @@ public class CollageView extends View {
         layers.add(layer);
         selectedLayer = layer;
         eraserMode = false;
+        cropMode = false;
+        notifySelectionChanged();
         invalidate();
     }
 
@@ -412,6 +454,105 @@ public class CollageView extends View {
 
     public boolean hasSelection() {
         return selectedLayer != null;
+    }
+
+    public boolean isCropMode() {
+        return cropMode;
+    }
+
+    public boolean beginCropMode() {
+        if (!(selectedLayer instanceof ImageLayer)) return false;
+
+        eraserMode = false;
+        dragMode = DRAG_NONE;
+        cropMode = true;
+        cropLeftFraction = 0f;
+        cropRightFraction = 0f;
+        cropTopFraction = 0f;
+        cropBottomFraction = 0f;
+        updateCropRect();
+        invalidate();
+        return true;
+    }
+
+    public void updateCropInsets(
+            float leftFraction,
+            float rightFraction,
+            float topFraction,
+            float bottomFraction) {
+        if (!cropMode || !(selectedLayer instanceof ImageLayer)) return;
+
+        cropLeftFraction = clampCropFraction(leftFraction);
+        cropRightFraction = clampCropFraction(rightFraction);
+        cropTopFraction = clampCropFraction(topFraction);
+        cropBottomFraction = clampCropFraction(bottomFraction);
+
+        float horizontal = cropLeftFraction + cropRightFraction;
+        if (horizontal > 0.92f) {
+            float k = 0.92f / horizontal;
+            cropLeftFraction *= k;
+            cropRightFraction *= k;
+        }
+
+        float vertical = cropTopFraction + cropBottomFraction;
+        if (vertical > 0.92f) {
+            float k = 0.92f / vertical;
+            cropTopFraction *= k;
+            cropBottomFraction *= k;
+        }
+
+        updateCropRect();
+        invalidate();
+    }
+
+    public boolean applyCropMode() {
+        if (!cropMode || !(selectedLayer instanceof ImageLayer)) return false;
+
+        ImageLayer layer = (ImageLayer) selectedLayer;
+        int w = layer.bitmap.getWidth();
+        int h = layer.bitmap.getHeight();
+
+        int left = Math.max(0, Math.min(w - 1, Math.round(w * cropLeftFraction)));
+        int rightInset = Math.max(0, Math.min(w - 1, Math.round(w * cropRightFraction)));
+        int top = Math.max(0, Math.min(h - 1, Math.round(h * cropTopFraction)));
+        int bottomInset = Math.max(0, Math.min(h - 1, Math.round(h * cropBottomFraction)));
+
+        int newW = Math.max(1, w - left - rightInset);
+        int newH = Math.max(1, h - top - bottomInset);
+
+        if (newW == w && newH == h) {
+            cropMode = false;
+            invalidate();
+            return false;
+        }
+
+        checkpoint();
+
+        float[] offset = {left, top};
+        float[] origin = {0f, 0f};
+        layer.matrix.mapPoints(offset);
+        layer.matrix.mapPoints(origin);
+
+        Bitmap cropped = Bitmap.createBitmap(layer.bitmap, left, top, newW, newH)
+                .copy(Bitmap.Config.ARGB_8888, true);
+        layer.bitmap = cropped;
+        layer.updateBounds();
+
+        layer.matrix.postTranslate(
+                offset[0] - origin[0],
+                offset[1] - origin[1]);
+
+        cropMode = false;
+        cropRectLocal.setEmpty();
+        notifySelectionChanged();
+        invalidate();
+        return true;
+    }
+
+    public void cancelCropMode() {
+        cropMode = false;
+        cropRectLocal.setEmpty();
+        invalidate();
     }
 
     public boolean isTextSelected() {
@@ -553,6 +694,7 @@ public class CollageView extends View {
     }
 
     public boolean setEraserMode(boolean enabled) {
+        if (cropMode) return false;
         if (enabled && !(selectedLayer instanceof ImageLayer)) {
             eraserMode = false;
             return false;
@@ -577,6 +719,8 @@ public class CollageView extends View {
         layers.remove(selectedLayer);
         selectedLayer = null;
         eraserMode = false;
+        cropMode = false;
+        notifySelectionChanged();
         invalidate();
     }
 
@@ -712,8 +856,39 @@ public class CollageView extends View {
         }
 
         if (showSelection && selectedLayer != null) {
-            drawSelection(canvas);
+            if (cropMode && selectedLayer instanceof ImageLayer) {
+                drawCropPreview(canvas);
+            } else {
+                drawSelection(canvas);
+            }
         }
+
+        canvas.restore();
+    }
+
+    private void drawCropPreview(Canvas canvas) {
+        ImageLayer layer = (ImageLayer) selectedLayer;
+        RectF full = layer.localBounds;
+
+        canvas.save();
+        canvas.concat(layer.matrix);
+
+        canvas.drawRect(full.left, full.top, full.right, cropRectLocal.top, cropShadePaint);
+        canvas.drawRect(full.left, cropRectLocal.bottom, full.right, full.bottom, cropShadePaint);
+        canvas.drawRect(full.left, cropRectLocal.top, cropRectLocal.left, cropRectLocal.bottom, cropShadePaint);
+        canvas.drawRect(cropRectLocal.right, cropRectLocal.top, full.right, cropRectLocal.bottom, cropShadePaint);
+
+        canvas.drawRect(cropRectLocal, cropFramePaint);
+
+        float x1 = cropRectLocal.left + cropRectLocal.width() / 3f;
+        float x2 = cropRectLocal.left + cropRectLocal.width() * 2f / 3f;
+        float y1 = cropRectLocal.top + cropRectLocal.height() / 3f;
+        float y2 = cropRectLocal.top + cropRectLocal.height() * 2f / 3f;
+
+        canvas.drawLine(x1, cropRectLocal.top, x1, cropRectLocal.bottom, cropGridPaint);
+        canvas.drawLine(x2, cropRectLocal.top, x2, cropRectLocal.bottom, cropGridPaint);
+        canvas.drawLine(cropRectLocal.left, y1, cropRectLocal.right, y1, cropGridPaint);
+        canvas.drawLine(cropRectLocal.left, y2, cropRectLocal.right, y2, cropGridPaint);
 
         canvas.restore();
     }
@@ -789,6 +964,10 @@ public class CollageView extends View {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
+        if (cropMode) {
+            return true;
+        }
+
         if (eraserMode) {
             return handleEraserTouch(event);
         }
@@ -808,13 +987,19 @@ public class CollageView extends View {
                 }
 
                 if (!canvasRect.contains(event.getX(), event.getY())) {
-                    selectedLayer = null;
+                    if (selectedLayer != null) {
+                        selectedLayer = null;
+                        notifySelectionChanged();
+                    }
                     invalidate();
                     return true;
                 }
 
                 Layer touched = findTopLayer(event.getX(), event.getY());
-                selectedLayer = touched;
+                if (selectedLayer != touched) {
+                    selectedLayer = touched;
+                    notifySelectionChanged();
+                }
 
                 if (selectedLayer != null) {
                     dragMode = DRAG_MOVE;
@@ -1097,6 +1282,28 @@ public class CollageView extends View {
         } else {
             selectedLayer = null;
         }
+
+        cropMode = false;
+        cropRectLocal.setEmpty();
+        notifySelectionChanged();
+    }
+
+    private void updateCropRect() {
+        if (!(selectedLayer instanceof ImageLayer)) {
+            cropRectLocal.setEmpty();
+            return;
+        }
+
+        RectF b = selectedLayer.localBounds;
+        cropRectLocal.set(
+                b.left + b.width() * cropLeftFraction,
+                b.top + b.height() * cropTopFraction,
+                b.right - b.width() * cropRightFraction,
+                b.bottom - b.height() * cropBottomFraction);
+    }
+
+    private float clampCropFraction(float value) {
+        return Math.max(0f, Math.min(value, 0.9f));
     }
 
     private float dp(float value) {
